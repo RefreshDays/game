@@ -2,6 +2,8 @@
 
 ## 🎃 할로윈 사탕 미로
 
+![할로윈 사탕 미로](halloween-maze/og.png)
+
 아이가 기획한 모바일 레고 스타일 2D 미로 게임. 깜깜한 미로에서 사탕을 모두 모으고 숨은 출구를 찾아 탈출하세요. 유령 조심!
 
 - ▶️ **플레이**: https://refreshdays.github.io/game/halloween-maze/ (GitHub Pages 켜진 뒤)
