@@ -32,28 +32,28 @@
     #app{grid-template-columns:1fr auto;grid-template-rows:auto 1fr;grid-template-areas:"hud hud" "stage ctrl"}
     #app #controls{padding:0 18px 0 6px}
   }
-  #hud{grid-area:hud;display:flex;align-items:center;gap:5px;padding:8px 8px;font-weight:800;font-size:14px}
+  #hud{grid-area:hud;display:flex;align-items:center;gap:5px;padding:6px 8px;font-weight:800;font-size:14px}
   .chip{background:var(--panel);border-radius:10px;padding:6px 8px;box-shadow:inset 0 -3px 0 rgba(0,0,0,.4);white-space:nowrap}
   #hud .sp{flex:1}
   .ibtn{width:38px;height:36px;border:0;border-radius:10px;background:var(--panel);color:var(--text);font-size:18px;
     box-shadow:inset 0 -3px 0 rgba(0,0,0,.4);cursor:pointer}
-  #stage{grid-area:stage;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;min-width:0;padding:6px}
+  #stage{grid-area:stage;position:relative;display:flex;align-items:center;justify-content:center;min-height:0;min-width:0;padding:4px}
   canvas{display:block;border-radius:6px;box-shadow:0 0 0 4px #0b0612,0 10px 30px rgba(0,0,0,.7)}
   #toast{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(20,8,32,.9);border:2px solid var(--orange);
     padding:8px 14px;border-radius:12px;font-weight:800;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap}
   #toast.show{opacity:1}
-  #controls{grid-area:ctrl;display:flex;align-items:center;justify-content:center;padding:6px 0 10px}
+  #controls{grid-area:ctrl;display:flex;align-items:center;justify-content:center;padding:2px 0 8px}
   /* 레고 스타일 십자 방향 패드 */
-  #dpad{width:180px;height:180px;position:relative;touch-action:none}
-  .arrow{position:absolute;width:62px;height:62px;border-radius:12px;background:var(--orange);
+  #dpad{width:138px;height:138px;position:relative;touch-action:none}
+  .arrow{position:absolute;width:48px;height:48px;border-radius:10px;background:var(--orange);
     box-shadow:inset 0 -6px 0 var(--orange-d),inset 0 3px 0 rgba(255,255,255,.35),0 4px 0 #000;
-    display:flex;align-items:center;justify-content:center;color:#3a1600;font-size:26px;font-weight:900;pointer-events:none;transition:transform .05s}
-  .arrow::before{content:"";position:absolute;width:26px;height:26px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;color:#3a1600;font-size:20px;font-weight:900;pointer-events:none;transition:transform .05s}
+  .arrow::before{content:"";position:absolute;width:20px;height:20px;border-radius:50%;
     background:radial-gradient(circle at 35% 35%,#ffc27a,var(--orange) 60%);box-shadow:0 3px 0 var(--orange-d);opacity:.55}
   .arrow span{position:relative}
   .arrow.on{transform:translateY(4px);box-shadow:inset 0 -2px 0 var(--orange-d),0 0 0 #000;background:#ffa64d}
-  #a-up{left:59px;top:0}#a-down{left:59px;bottom:0}#a-left{left:0;top:59px}#a-right{right:0;top:59px}
-  #dcenter{position:absolute;left:59px;top:59px;width:62px;height:62px;border-radius:12px;background:#5a2d91;
+  #a-up{left:45px;top:0}#a-down{left:45px;bottom:0}#a-left{left:0;top:45px}#a-right{right:0;top:45px}
+  #dcenter{position:absolute;left:45px;top:45px;width:48px;height:48px;border-radius:10px;background:#5a2d91;
     box-shadow:inset 0 -6px 0 #3b1a63;pointer-events:none}
   #overlay{position:fixed;inset:0;display:flex;align-items:safe center;justify-content:center;overflow-y:auto;touch-action:pan-y;background:rgba(10,4,18,.78);z-index:10;padding:20px}
   #overlay.hide{display:none}
@@ -521,14 +521,25 @@ function burst(x, y, color, n) {
 
 // ===================== 화면 크기 =====================
 function stageSize() { const s = $('#stage'); return { w: Math.max(100, s.clientWidth - 12), h: Math.max(100, s.clientHeight - 12) }; }
+// 미로가 화면에 다 안 들어가서 벽돌이 너무 작아지면, 벽돌 크기를 지키고 화면이 주인공을 따라감(카메라)
+const MIN_TILE = 30;
+let viewW = 0, viewH = 0, camX = 0, camY = 0;
 function resize() {
   if (!maze) return;
   const { w, h } = stageSize();
-  tile = Math.max(8, Math.floor(Math.min(w / W, h / H)));
+  const fit = Math.floor(Math.min(w / W, h / H));
+  tile = Math.max(8, fit, Math.min(MIN_TILE, Math.floor(Math.min(w, h) / 9)));
+  viewW = Math.min(W * tile, Math.floor(w)); viewH = Math.min(H * tile, Math.floor(h));
   dpr = Math.min(window.devicePixelRatio || 1, 2);
-  for (const c of [cv, dark, base]) { c.width = W * tile * dpr; c.height = H * tile * dpr; }
-  cv.style.width = W * tile + 'px'; cv.style.height = H * tile + 'px';
+  for (const c of [dark, base]) { c.width = W * tile * dpr; c.height = H * tile * dpr; }
+  cv.width = viewW * dpr; cv.height = viewH * dpr;
+  cv.style.width = viewW + 'px'; cv.style.height = viewH + 'px';
   drawBase();
+}
+function updateCam() {
+  const t = tile, cl = (v, max) => Math.max(0, Math.min(max, v));
+  camX = Math.round(cl(player.px * t + t / 2 - viewW / 2, W * t - viewW));
+  camY = Math.round(cl(player.py * t + t / 2 - viewH / 2, H * t - viewH));
 }
 addEventListener('resize', () => setTimeout(resize, 50));
 
@@ -649,7 +660,8 @@ function drawExit(c) {
 function render() {
   if (!maze) return;
   const t = tile;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  updateCam();
+  ctx.setTransform(dpr, 0, 0, dpr, -camX * dpr, -camY * dpr);
   ctx.drawImage(base, 0, 0, W * t, H * t);
   for (const g of ghosts) drawGhost(ctx, g, false);
   const mates = coop ? coopMates() : [];
@@ -668,8 +680,8 @@ function render() {
     grd.addColorStop(0, 'rgba(0,0,0,1)'); grd.addColorStop(.7, 'rgba(0,0,0,.8)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
     dctx.fillStyle = grd; dctx.beginPath(); dctx.arc(lx, ly, R, 0, 7); dctx.fill();
   }
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(dark, 0, 0);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, -camX * dpr, -camY * dpr); ctx.drawImage(dark, 0, 0);
+  ctx.setTransform(dpr, 0, 0, dpr, -camX * dpr, -camY * dpr);
   // 은은한 주황 불빛
   for (const L of lights) {
     const lx = L.px * t + t / 2, ly = L.py * t + t / 2;
@@ -689,6 +701,24 @@ function render() {
   }
   for (const q of particles) { ctx.globalAlpha = Math.min(1, q.t * 2); ctx.fillStyle = q.color; ctx.fillRect(q.x * t + t / 2 - t * .06, q.y * t + t / 2 - t * .06, t * .12, t * .12); }
   ctx.globalAlpha = 1;
+  // 화면 밖 사탕(과 찾은 출구)은 화면 가장자리에 작게 표시 → 사탕 위치는 늘 알 수 있음
+  if (viewW < W * t || viewH < H * t) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const pts = candies.filter(k => !k.taken).map(k => ({ x: k.x, y: k.y, col: `hsl(${k.hue},90%,60%)` }));
+    if (exitFound) pts.push({ x: exitT.x, y: exitT.y, col: exitOpen ? '#5dff4a' : '#a0703a' });
+    const m = 9;
+    for (const k of pts) {
+      const sx = k.x * t + t / 2 - camX, sy = k.y * t + t / 2 - camY;
+      if (sx >= 0 && sx <= viewW && sy >= 0 && sy <= viewH) continue;
+      const ex = Math.max(m, Math.min(viewW - m, sx)), ey = Math.max(m, Math.min(viewH - m, sy));
+      const a = Math.atan2(sy - ey, sx - ex);
+      ctx.save(); ctx.translate(ex, ey); ctx.globalAlpha = .55 + .35 * Math.sin(clock * 5);
+      ctx.shadowColor = k.col; ctx.shadowBlur = 10; ctx.fillStyle = k.col;
+      ctx.beginPath(); ctx.arc(0, 0, 5, 0, 7); ctx.fill();
+      ctx.rotate(a); ctx.beginPath(); ctx.moveTo(9, 0); ctx.lineTo(4, -4); ctx.lineTo(4, 4); ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
 }
 
 // ===================== UI =====================
@@ -1035,13 +1065,16 @@ function coopLobbyUpdate() {
   });
   const m = coopMeta(), host = coopIsHost();
   const html = m.status && m.status !== 'lobby' ? `<p>다른 친구들이 게임 중이에요. 다음 판부터 같이 해요!</p>`
-    : host ? `<button class="bbtn" data-act="coopstart">▶ 모두 모였어! 시작하기</button>` : `<p>👑 방장이 시작하면 바로 시작돼요…</p>`;
+    : !host ? `<p>👑 방장이 시작하면 바로 시작돼요…</p>`
+    : coopPlayers().length < 2 ? `<p>👀 친구가 들어오길 기다리는 중…<br><span class="small">친구가 1명 이상 들어오면 시작할 수 있어요.</span></p>`
+    : `<button class="bbtn" data-act="coopstart">▶ 모두 모였어! 시작하기 (${coopPlayers().length}명)</button>`;
   if (ctl.dataset.h !== html) { ctl.innerHTML = html; ctl.dataset.h = html; }
 }
 // 팀 하트 = 2 + 사람 수 (혼자 3, 둘 4, 셋 5, 넷 6)
 const coopHearts = () => Math.min(6, 2 + Math.max(1, coopPlayers().length));
 function coopStartGame() {
   const m = coopMeta();
+  if (coopPlayers().length < 2) { coopLobbyUpdate(); return; }
   coopSend('PATCH', 'meta', { status: 'play', level: 1, round: (m.round || 0) + 1, startAt: SV_TS, hearts: coopHearts(), score: 0, levelScore: 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
 }
 function coopRetry() {
