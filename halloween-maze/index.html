@@ -290,7 +290,7 @@ function resetActors() {
 let keyStack = [], padDir = null, autoDir = null;
 const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
 addEventListener('keydown', e => {
-  if (e.target && e.target.tagName === 'INPUT') { if (e.key === 'Enter') { e.preventDefault(); $('[data-act=start]').click(); } return; }
+  if (e.target && e.target.tagName === 'INPUT') { if (e.key === 'Enter') { e.preventDefault(); const cb = $('#contBtn'); (cb && cb.style.display !== 'none' ? cb : $('[data-act=start]')).click(); } return; }
   if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') { togglePause(); return; }
   if ((e.key === 'Enter' || e.key === ' ') && state !== 'play') { const b = $('#card .bbtn'); if (b) { b.click(); e.preventDefault(); } return; }
   const d = KEYMAP[e.key]; if (!d) return;
@@ -485,6 +485,7 @@ function endRun() {
 }
 function levelClear() {
   state = 'clear'; SFX.win(); runCandies += got;
+  setTimeout(() => saveCheckpoint(), 0);
   const b = { candy: got * CFG.scoreCandy, clear: level * CFG.scoreClear, time: Math.ceil(timeLeft) * CFG.scoreSecond, heart: hearts * CFG.scoreHeart };
   b.total = b.candy + b.clear + b.time + b.heart; runScore += b.total; lastBonus = b;
   if (level === CFG.finalLevel) { recordScore().then(() => showOverlay('ending')); if (level > best) { best = level; store.set('hm_best', best); } return; }
@@ -676,7 +677,8 @@ function showOverlay(kind) {
     <p>⏱ 판마다 <b>제한시간</b>이 있어요!</p>
     ${best ? `<p class="small">이 기기 최고 기록: 레벨 ${best} 탈출${best >= CFG.finalLevel ? ' 🏆' : ''}</p>` : ''}
     <input id="nameIn" maxlength="8" placeholder="내 이름 (랭킹에 나와요)" value="${esc(playerName)}" autocomplete="off" enterkeyhint="go">
-    <button class="bbtn" data-act="start">시작하기</button>
+    <button class="bbtn" data-act="cont" id="contBtn" style="display:none">▶ 이어하기</button>
+    <button class="bbtn" data-act="start" id="startBtn">시작하기</button>
     <button class="bbtn alt" data-act="rank">🏆 랭킹 보기</button>`;
   if (kind === 'pause') html = `<h2>⏸ 잠깐 쉬는 중</h2><button class="bbtn" data-act="resume">계속하기</button><button class="bbtn alt" data-act="home">처음 화면</button>`;
   const bonus = lastBonus ? `<div class="score">🍬 사탕 ${got}개 <b>+${lastBonus.candy}</b><br>🚪 레벨 ${level} 탈출 <b>+${lastBonus.clear}</b><br>⏱ 남은 시간 ${Math.ceil(timeLeft)}초 <b>+${lastBonus.time}</b><br>❤️ 남은 하트 ${hearts}개 <b>+${lastBonus.heart}</b><br>⭐ 지금까지 점수 <b>${runScore}</b></div>` : '';
@@ -699,6 +701,7 @@ function showOverlay(kind) {
     <button class="bbtn alt" data-act="back">돌아가기</button>`;
   card.innerHTML = html; $('#overlay').classList.remove('hide');
   if (kind === 'rank') renderRank();
+  if (kind === 'title') refreshCont();
   backTo = kind === 'rank' ? backTo : kind;
 }
 let backTo = 'title';
@@ -711,8 +714,13 @@ $('#card').addEventListener('click', e => {
     playerName = nm; store.set('hm_name', nm); inp.blur();
     level = 1; hearts = CFG.hearts; newRun(); begin();
   }
+  if (act === 'cont') {
+    const nm = $('#nameIn').value.trim().slice(0, 8), cp = getCheckpoint(nm); if (!cp) return;
+    playerName = nm; store.set('hm_name', nm); $('#nameIn').blur();
+    hearts = CFG.hearts; loadCheckpoint(cp); begin();
+  }
   if (act === 'next') { level++; begin(); }
-  if (act === 'retry') { hearts = CFG.hearts; newRun(); begin(); }
+  if (act === 'retry') { hearts = CFG.hearts; const cp = getCheckpoint(playerName); if (cp && cp.level === level) loadCheckpoint(cp); else newRun(); begin(); }
   if (act === 'rank') { if ($('#nameIn')) playerName = $('#nameIn').value.trim().slice(0, 8) || playerName; showOverlay('rank'); }
   if (act === 'back') showOverlay(backTo);
   if (act === 'tab-local' || act === 'tab-online') { rankTab = act.slice(4); showOverlay('rank'); }
@@ -723,6 +731,28 @@ $('#card').addEventListener('click', e => {
     if (quitting) recordScore().then(() => showOverlay('title')); else showOverlay('title');
   }
 });
+// ===================== 이어하기 (닉네임별 체크포인트) =====================
+// 레벨을 탈출할 때마다 "다음 레벨 시작 시점"의 레벨·점수를 이 기기에 저장.
+// 다시 열거나 처음 화면으로 가도 그 레벨부터, 그때 점수 그대로 이어서 할 수 있다.
+function allCheckpoints() { try { return JSON.parse(store.get('hm_prog') || '{}'); } catch (e) { return {}; } }
+function getCheckpoint(nm) { const cp = nm && allCheckpoints()[nm]; return cp && cp.level > 1 ? cp : null; }
+function saveCheckpoint() {
+  if (!playerName) return;
+  const all = allCheckpoints(), cur = all[playerName], next = level + 1;
+  if (cur && cur.level > next) return;            // 처음부터 다시 하는 중이면 더 높은 기록을 지우지 않음
+  all[playerName] = { level: next, score: runScore, candies: runCandies, time: Math.round(runTime) };
+  store.set('hm_prog', JSON.stringify(all));
+}
+function loadCheckpoint(cp) { newRun(); level = cp.level; runScore = cp.score || 0; runCandies = cp.candies || 0; runTime = cp.time || 0; }
+function refreshCont() {
+  const inp = $('#nameIn'), btn = $('#contBtn'), st = $('#startBtn'); if (!inp || !btn) return;
+  const cp = getCheckpoint(inp.value.trim().slice(0, 8));
+  btn.style.display = cp ? '' : 'none';
+  if (cp) btn.textContent = `▶ 이어하기 (레벨 ${cp.level}부터 · ⭐${cp.score})`;
+  st.textContent = cp ? '🔄 처음부터' : '시작하기';
+  st.classList.toggle('alt', !!cp);
+}
+$('#card').addEventListener('input', e => { if (e.target.id === 'nameIn') refreshCont(); });
 function newRun() { runTime = 0; runCandies = 0; runScore = 0; lastBonus = null; lastRank = null; }
 function begin() { $('#overlay').classList.add('hide'); setupLevel(); inv = 0; state = 'play'; toast(`레벨 ${level} · 사탕 ${candies.length}개를 찾아라!`); }
 function togglePause() {
