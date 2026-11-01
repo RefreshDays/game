@@ -157,7 +157,7 @@ const CFG = {
 // 방법은 docs/halloween-maze-개발정의서.md "온라인 랭킹 설정" 참고. 비워 두면 '이 기기 랭킹'만 동작합니다.
 const ONLINE = { projectId: 'halloween-maze-f201d', apiKey: 'AIzaSyB_0zadd9ZydBL63yuVh5uwQ-URwGnbRmo', collection: 'halloween_scores',
   // 같이 하기(실시간 협동)용 Firebase Realtime Database 주소. 비워 두면 협동 모드는 "설정 필요"로 표시됨
-  rtdbUrl: '' };
+  rtdbUrl: 'https://halloween-maze-f201d-default-rtdb.asia-southeast1.firebasedatabase.app' };
 
 const $ = s => document.querySelector(s);
 const cv = $('#cv'), ctx = cv.getContext('2d');
@@ -695,7 +695,7 @@ function render() {
 function updateHud() {
   $('#hLevel').textContent = (roomCode ? '👫' : '🎃') + ' ' + (level <= CFG.finalLevel ? `${level}/${CFG.finalLevel}` : `∞ ${level}`);
   $('#hCandy').textContent = `🍬 ${got}/${candies.length}`;
-  $('#hHeart').textContent = hearts > 0 ? '❤️'.repeat(Math.min(hearts, 5)) : '🖤';
+  $('#hHeart').textContent = hearts > 0 ? '❤️'.repeat(Math.min(hearts, 6)) : '🖤';
   $('#bSound').textContent = { all: '🎵', sfx: '🔊', off: '🔇' }[audioMode];
   updateTime();
 }
@@ -747,7 +747,7 @@ function showOverlay(kind) {
   if (kind === 'coopentry') html = !coopReady() ? `<h2>🤝 친구랑 같이 (협동)</h2>
     <p>협동 모드는 아직 설정되지 않았어요.<br>부모님이 Firebase에서 <b>Realtime Database</b>를 켜면 쓸 수 있어요.</p>
     <button class="bbtn alt" data-act="back">돌아가기</button>` : `<h2>🤝 친구랑 같이 (협동)</h2>
-    <p>한 미로에서 친구들과 <b>같이</b> 움직여요!<br>사탕은 누가 먹어도 같이 모아지고,<br>하트와 시간도 다 같이 써요.<br>사탕을 다 모으고 <b>한 명이라도</b> 출구에 들어가면 모두 탈출!</p>
+    <p>한 미로에서 친구들과 <b>같이</b> 움직여요!<br>사탕은 누가 먹어도 같이 모아지고,<br>하트(사람 수 + 2개)와 시간도 다 같이 써요.<br>잡히면 그 친구만 처음 자리로!<br>사탕을 다 모으고 <b>한 명이라도</b> 출구에 들어가면 모두 탈출!</p>
     <button class="bbtn" data-act="coopcreate">🏠 방 만들기</button>
     <input id="coopCode" class="code" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off">
     <button class="bbtn alt" data-act="coopjoin">🚪 이 번호 방에 들어가기</button>
@@ -1038,13 +1038,15 @@ function coopLobbyUpdate() {
     : host ? `<button class="bbtn" data-act="coopstart">▶ 모두 모였어! 시작하기</button>` : `<p>👑 방장이 시작하면 바로 시작돼요…</p>`;
   if (ctl.dataset.h !== html) { ctl.innerHTML = html; ctl.dataset.h = html; }
 }
+// 팀 하트 = 2 + 사람 수 (혼자 3, 둘 4, 셋 5, 넷 6)
+const coopHearts = () => Math.min(6, 2 + Math.max(1, coopPlayers().length));
 function coopStartGame() {
   const m = coopMeta();
-  coopSend('PATCH', 'meta', { status: 'play', level: 1, round: (m.round || 0) + 1, startAt: SV_TS, hearts: CFG.hearts, score: 0, levelScore: 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
+  coopSend('PATCH', 'meta', { status: 'play', level: 1, round: (m.round || 0) + 1, startAt: SV_TS, hearts: coopHearts(), score: 0, levelScore: 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
 }
 function coopRetry() {
   const m = coopMeta();
-  coopSend('PATCH', 'meta', { status: 'play', round: (m.round || 0) + 1, startAt: SV_TS, hearts: CFG.hearts, score: m.levelScore || 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
+  coopSend('PATCH', 'meta', { status: 'play', round: (m.round || 0) + 1, startAt: SV_TS, hearts: coopHearts(), score: m.levelScore || 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
 }
 function coopNext(force) {
   const m = coopMeta();
