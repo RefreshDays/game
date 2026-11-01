@@ -69,6 +69,10 @@
   .bbtn:active{transform:translateY(3px)}
   .chip.warn{background:#c0262d;animation:blink .5s steps(2) infinite}
   @keyframes blink{50%{background:#5a0f14}}
+  .coopList{list-style:none;margin:8px 0;padding:0;text-align:left}
+  .coopList li{display:flex;align-items:center;gap:8px;padding:8px 10px;margin:4px 0;border-radius:10px;background:#1a0d2b;font-weight:800}
+  .coopList .dot{width:18px;height:18px;border-radius:5px;box-shadow:inset 0 -3px 0 rgba(0,0,0,.35)}
+  .card .big{font-size:40px;letter-spacing:8px;font-weight:900;color:#ffc27a;margin:4px 0}
   .card input.code{font-size:30px;letter-spacing:10px}
   .card input{width:100%;margin-top:8px;padding:12px;border-radius:12px;border:3px solid #000;font-size:18px;font-weight:800;text-align:center;
     background:#fff4e0;color:#2b1000;user-select:text;-webkit-user-select:text;touch-action:manipulation}
@@ -151,7 +155,9 @@ const CFG = {
 // ===================== 온라인 랭킹 (선택) =====================
 // 친구들이 각자 휴대폰에서 같은 랭킹을 보려면 무료 Firebase 프로젝트를 만들고 아래 두 값을 채우세요.
 // 방법은 docs/halloween-maze-개발정의서.md "온라인 랭킹 설정" 참고. 비워 두면 '이 기기 랭킹'만 동작합니다.
-const ONLINE = { projectId: 'halloween-maze-f201d', apiKey: 'AIzaSyB_0zadd9ZydBL63yuVh5uwQ-URwGnbRmo', collection: 'halloween_scores' };
+const ONLINE = { projectId: 'halloween-maze-f201d', apiKey: 'AIzaSyB_0zadd9ZydBL63yuVh5uwQ-URwGnbRmo', collection: 'halloween_scores',
+  // 같이 하기(실시간 협동)용 Firebase Realtime Database 주소. 비워 두면 협동 모드는 "설정 필요"로 표시됨
+  rtdbUrl: '' };
 
 const $ = s => document.querySelector(s);
 const cv = $('#cv'), ctx = cv.getContext('2d');
@@ -283,8 +289,12 @@ function resetRound() {
   got = 0; exitOpen = false; exitFound = false;
   resetActors();
 }
-function resetActors() {
+function resetPlayer() {
   player = { x: startT.x, y: startT.y, px: startT.x, py: startT.y, tx: startT.x, ty: startT.y, moving: false, face: 1, step: 0 };
+  autoDir = null;
+}
+function resetActors() {
+  resetPlayer();
   ghosts.forEach((g, i) => {
     Object.assign(g, { x: g.sx, y: g.sy, px: g.sx, py: g.sy, tx: g.sx, ty: g.sy, moving: false, dir: null,
       wait: CFG.firstGhostDelay(level) + i * CFG.ghostGap, pause: 0 });
@@ -297,6 +307,7 @@ function resetActors() {
 let keyStack = [], padDir = null, autoDir = null;
 const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
 addEventListener('keydown', e => {
+  if (e.target && e.target.id === 'coopCode') { if (e.key === 'Enter') { e.preventDefault(); $('[data-act=coopjoin]').click(); } return; }
   if (e.target && e.target.id === 'codeIn') { if (e.key === 'Enter') { e.preventDefault(); $('[data-act=roomstart]').click(); } return; }
   if (e.target && e.target.tagName === 'INPUT') { if (e.key === 'Enter') { e.preventDefault(); const cb = $('#contBtn'); (cb && cb.style.display !== 'none' ? cb : $('[data-act=start]')).click(); } return; }
   if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') { togglePause(); return; }
@@ -421,9 +432,9 @@ function stepPlayer(dt) {
   }
 }
 function onArrive() {
-  distMap = bfs(player.x, player.y);
+  if (!coop) distMap = bfs(player.x, player.y);
   if (player.x === exitT.x && player.y === exitT.y) {
-    if (exitOpen) levelClear();
+    if (exitOpen) { if (coop) coopClear(); else levelClear(); }
     else if (clock - lockedToastAt > 2) { lockedToastAt = clock; toast(`🔒 사탕을 다 모아야 열려요 (${got}/${candies.length})`); }
   }
 }
@@ -453,7 +464,8 @@ function stepGhost(g, dt) {
 }
 function update(dt) {
   levelTime += dt; runTime += dt; if (inv > 0) inv -= dt;
-  timeLeft -= dt;
+  if (coop) { timeLeft = timeLimit - Math.max(0, sNow() - coop.startAt) / 1000; if (timeLeft <= 0) { timeLeft = 0; updateTime(); coopTimeUp(); return; } }
+  else timeLeft -= dt;
   const sec = Math.ceil(timeLeft);
   if (sec !== lastTick) {
     lastTick = sec; updateTime();
@@ -463,15 +475,18 @@ function update(dt) {
   stepPlayer(dt); if (state !== 'play') return;
   for (const c of candies) if (!c.taken && Math.hypot(player.px - c.x, player.py - c.y) < 0.5) {
     c.taken = true; got++; SFX.candy(); burst(c.x, c.y, `hsl(${c.hue},90%,60%)`, 14);
+    if (coop) { c.pending = true; coopSend('PUT', 'meta/candies/' + candies.indexOf(c), coop.pid); }
     if (got === candies.length) { exitOpen = true; SFX.open(); toast(exitFound ? '🚪 출구가 열렸어! 탈출하자!' : '🔓 어딘가 출구가 열렸어! 찾아보자!'); }
     else toast(`🍬 ${got}/${candies.length}`);
     updateHud();
   }
   if (!exitFound && Math.hypot(exitT.x - player.px, exitT.y - player.py) <= CFG.lightRadius(level) * .75) {
     exitFound = true; SFX.found(); toast(exitOpen ? '🚪 출구 발견! 들어가자!' : '🚪 출구를 찾았다! 사탕을 다 모으면 열려요');
+    if (coop) coopSend('PUT', 'meta/exitFound', true);
   }
-  for (const g of ghosts) stepGhost(g, dt);
-  if (inv <= 0) for (const g of ghosts) if (g.wait <= 0 && Math.hypot(g.px - player.px, g.py - player.py) < 0.62) { caught(); break; }
+  if (!coop) for (const g of ghosts) stepGhost(g, dt);
+  else coopGhosts(dt);
+  if (inv <= 0) for (const g of ghosts) if (g.wait <= 0 && Math.hypot(g.px - player.px, g.py - player.py) < 0.62) { if (coop) coopCaught(); else caught(); break; }
   particles = particles.filter(q => (q.t -= dt) > 0);
   for (const q of particles) { q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 3 * dt; }
 }
@@ -559,19 +574,22 @@ function drawBase() {
   }
 }
 function drawPlayer(c) {
-  const t = tile, p = player, cx = p.px * t + t / 2, cy = p.py * t + t / 2;
-  const bob = p.moving ? Math.sin(p.step * Math.PI * 2) * t * .05 : 0;
   if (inv > 0 && Math.floor(clock * 10) % 2) return;
+  drawFig(c, player, coop ? coopColor(coop.pid) : '#ff7a14');
+}
+function drawFig(c, p, shirt) {
+  const t = tile, cx = p.px * t + t / 2, cy = p.py * t + t / 2;
+  const bob = p.moving ? Math.sin(p.step * Math.PI * 2) * t * .05 : 0;
   c.save(); c.translate(cx, cy + bob);
   // 다리
   c.fillStyle = '#2d3e8c';
   const sw = p.moving ? Math.sin(p.step * Math.PI * 2) * t * .06 : 0;
   c.fillRect(-t * .2, t * .18 + sw, t * .17, t * .26); c.fillRect(t * .03, t * .18 - sw, t * .17, t * .26);
   // 몸통 (호박색 옷)
-  c.fillStyle = '#ff7a14'; c.beginPath(); c.moveTo(-t * .22, -t * .02); c.lineTo(t * .22, -t * .02); c.lineTo(t * .26, t * .22); c.lineTo(-t * .26, t * .22); c.closePath(); c.fill();
+  c.fillStyle = shirt; c.beginPath(); c.moveTo(-t * .22, -t * .02); c.lineTo(t * .22, -t * .02); c.lineTo(t * .26, t * .22); c.lineTo(-t * .26, t * .22); c.closePath(); c.fill();
   c.fillStyle = '#1a1a1a'; c.fillRect(-t * .05, t * .05, t * .1, t * .04);
   // 팔
-  c.fillStyle = '#e06500'; c.fillRect(-t * .34, t * .0, t * .1, t * .18); c.fillRect(t * .24, t * .0, t * .1, t * .18);
+  c.fillStyle = shade(shirt, -30); c.fillRect(-t * .34, t * .0, t * .1, t * .18); c.fillRect(t * .24, t * .0, t * .1, t * .18);
   // 머리 (노란 피규어 머리 + 위 스터드)
   c.fillStyle = '#c99a00'; c.fillRect(-t * .07, -t * .48, t * .14, t * .08);
   c.fillStyle = '#ffd21f'; c.fillRect(-t * .06, -t * .5, t * .12, t * .07);
@@ -634,27 +652,41 @@ function render() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.drawImage(base, 0, 0, W * t, H * t);
   for (const g of ghosts) drawGhost(ctx, g, false);
+  const mates = coop ? coopMates() : [];
+  for (const m of mates) drawFig(ctx, m.v, coopColor(m.id));
   drawPlayer(ctx);
-  // 어둠: 주인공 주변만 동그랗게 밝다
+  // 어둠: 주인공(협동이면 친구들까지) 주변만 동그랗게 밝다
   dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   dctx.globalCompositeOperation = 'source-over'; dctx.clearRect(0, 0, W * t, H * t);
   dctx.fillStyle = '#000'; dctx.fillRect(0, 0, W * t, H * t);
   dctx.globalCompositeOperation = 'destination-out';
   const R = CFG.lightRadius(level) * t * (1 + Math.sin(clock * 7) * .02 + Math.sin(clock * 13) * .015);
-  const lx = player.px * t + t / 2, ly = player.py * t + t / 2;
-  const grd = dctx.createRadialGradient(lx, ly, R * .35, lx, ly, R);
-  grd.addColorStop(0, 'rgba(0,0,0,1)'); grd.addColorStop(.7, 'rgba(0,0,0,.8)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
-  dctx.fillStyle = grd; dctx.beginPath(); dctx.arc(lx, ly, R, 0, 7); dctx.fill();
+  const lights = [player].concat(mates.map(m => m.v));
+  for (const L of lights) {
+    const lx = L.px * t + t / 2, ly = L.py * t + t / 2;
+    const grd = dctx.createRadialGradient(lx, ly, R * .35, lx, ly, R);
+    grd.addColorStop(0, 'rgba(0,0,0,1)'); grd.addColorStop(.7, 'rgba(0,0,0,.8)'); grd.addColorStop(1, 'rgba(0,0,0,0)');
+    dctx.fillStyle = grd; dctx.beginPath(); dctx.arc(lx, ly, R, 0, 7); dctx.fill();
+  }
   ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(dark, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   // 은은한 주황 불빛
-  const warm = ctx.createRadialGradient(lx, ly, 0, lx, ly, R);
-  warm.addColorStop(0, 'rgba(255,150,40,.12)'); warm.addColorStop(1, 'rgba(255,150,40,0)');
-  ctx.fillStyle = warm; ctx.fillRect(lx - R, ly - R, R * 2, R * 2);
+  for (const L of lights) {
+    const lx = L.px * t + t / 2, ly = L.py * t + t / 2;
+    const warm = ctx.createRadialGradient(lx, ly, 0, lx, ly, R);
+    warm.addColorStop(0, 'rgba(255,150,40,.12)'); warm.addColorStop(1, 'rgba(255,150,40,0)');
+    ctx.fillStyle = warm; ctx.fillRect(lx - R, ly - R, R * 2, R * 2);
+  }
   // 어둠 속에서도 보이는 것: 사탕, 출구, 유령 눈
   if (exitFound) drawExit(ctx);   // 출구는 불빛으로 한 번 비춰서 찾아야 보인다
   for (const k of candies) if (!k.taken) drawCandy(ctx, k);
-  for (const g of ghosts) if (Math.hypot(g.px - player.px, g.py - player.py) > CFG.lightRadius(level) * .8) drawGhost(ctx, g, true);
+  for (const g of ghosts) if (lights.every(L => Math.hypot(g.px - L.px, g.py - L.py) > CFG.lightRadius(level) * .8)) drawGhost(ctx, g, true);
+  // 친구 이름표 (어둠 속에서도 보이게)
+  ctx.font = `800 ${Math.max(10, t * .42)}px system-ui,sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  for (const m of mates) {
+    const x = m.v.px * t + t / 2, y = m.v.py * t - t * .05;
+    ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(m.name, x, y); ctx.fillStyle = coopColor(m.id); ctx.fillText(m.name, x, y);
+  }
   for (const q of particles) { ctx.globalAlpha = Math.min(1, q.t * 2); ctx.fillStyle = q.color; ctx.fillRect(q.x * t + t / 2 - t * .06, q.y * t + t / 2 - t * .06, t * .12, t * .12); }
   ctx.globalAlpha = 1;
 }
@@ -663,7 +695,7 @@ function render() {
 function updateHud() {
   $('#hLevel').textContent = (roomCode ? '👫' : '🎃') + ' ' + (level <= CFG.finalLevel ? `${level}/${CFG.finalLevel}` : `∞ ${level}`);
   $('#hCandy').textContent = `🍬 ${got}/${candies.length}`;
-  $('#hHeart').textContent = hearts > 0 ? '❤️'.repeat(hearts) : '🖤';
+  $('#hHeart').textContent = hearts > 0 ? '❤️'.repeat(Math.min(hearts, 5)) : '🖤';
   $('#bSound').textContent = { all: '🎵', sfx: '🔊', off: '🔇' }[audioMode];
   updateTime();
 }
@@ -687,7 +719,8 @@ function showOverlay(kind) {
     <input id="nameIn" maxlength="8" placeholder="내 이름 (랭킹에 나와요)" value="${esc(playerName)}" autocomplete="off" enterkeyhint="go">
     <button class="bbtn" data-act="cont" id="contBtn" style="display:none">▶ 이어하기</button>
     <button class="bbtn" data-act="start" id="startBtn">시작하기</button>
-    <button class="bbtn alt" data-act="room">👫 친구랑 같은 미로</button>
+    <button class="bbtn" data-act="coop" style="background:#2fa8ff;box-shadow:inset 0 -6px 0 #1a6fb0">🤝 친구랑 같이 (협동)</button>
+    <button class="bbtn alt" data-act="room">👫 친구랑 같은 미로 (각자)</button>
     <button class="bbtn alt" data-act="rank">🏆 랭킹 보기</button>`;
   if (kind === 'pause') html = `<h2>⏸ 잠깐 쉬는 중</h2><button class="bbtn" data-act="resume">계속하기</button><button class="bbtn alt" data-act="home">처음 화면</button>`;
   const bonus = lastBonus ? `<div class="score">🍬 사탕 ${got}개 <b>+${lastBonus.candy}</b><br>🚪 레벨 ${level} 탈출 <b>+${lastBonus.clear}</b><br>⏱ 남은 시간 ${Math.ceil(timeLeft)}초 <b>+${lastBonus.time}</b><br>❤️ 남은 하트 ${hearts}개 <b>+${lastBonus.heart}</b><br>⭐ 지금까지 점수 <b>${runScore}</b></div>` : '';
@@ -711,6 +744,28 @@ function showOverlay(kind) {
     <p class="small">번호를 만든 사람이 친구에게 알려 주고, 모두 같은 번호를 넣어요.<br>유령이 움직이는 길은 매번 달라요.</p>
     <button class="bbtn" data-act="roomstart">이 번호로 레벨 1부터 시작</button>
     <button class="bbtn alt" data-act="back">돌아가기</button>`;
+  if (kind === 'coopentry') html = !coopReady() ? `<h2>🤝 친구랑 같이 (협동)</h2>
+    <p>협동 모드는 아직 설정되지 않았어요.<br>부모님이 Firebase에서 <b>Realtime Database</b>를 켜면 쓸 수 있어요.</p>
+    <button class="bbtn alt" data-act="back">돌아가기</button>` : `<h2>🤝 친구랑 같이 (협동)</h2>
+    <p>한 미로에서 친구들과 <b>같이</b> 움직여요!<br>사탕은 누가 먹어도 같이 모아지고,<br>하트와 시간도 다 같이 써요.<br>사탕을 다 모으고 <b>한 명이라도</b> 출구에 들어가면 모두 탈출!</p>
+    <button class="bbtn" data-act="coopcreate">🏠 방 만들기</button>
+    <input id="coopCode" class="code" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off">
+    <button class="bbtn alt" data-act="coopjoin">🚪 이 번호 방에 들어가기</button>
+    <p class="small" id="coopMsg">최대 4명까지 같이 할 수 있어요.</p>
+    <button class="bbtn alt" data-act="back">돌아가기</button>`;
+  if (kind === 'lobby') html = `<h2>🤝 같이 하기 방</h2><p>방 번호</p><div class="big">${coop ? coop.code : ''}</div>
+    <p class="small">친구에게 이 번호를 알려 주세요. (최대 4명)</p>
+    <ul class="coopList" id="coopList"></ul>
+    <div id="lobbyCtl"></div>
+    <button class="bbtn alt" data-act="coopleave">방 나가기</button>`;
+  if (kind === 'coopclear') html = `<h2>🎉 다 같이 탈출!</h2><p>🤝 <b>${esc(coopMeta().clearBy || '친구')}</b> 덕분에 레벨 ${level} 클리어!</p>${bonus}
+    <p id="nextMsg">잠시 후 다음 레벨이 시작돼요…</p><button class="bbtn alt" data-act="coopleave">방 나가기</button>`;
+  if (kind === 'coopover') html = `<h2>${coopMeta().reason === 'time' ? '⏰ 시간 초과!' : '👻 하트를 다 잃었어요!'}</h2>
+    <div class="score">⭐ 우리 팀 점수 <b>${runScore}</b></div>${rankMsg}
+    ${coopIsHost() ? `<button class="bbtn" data-act="coopretry">다 같이 레벨 ${level} 다시 하기</button>` : `<p>방장이 다시 시작하면 같이 다시 해요.</p>`}
+    <button class="bbtn alt" data-act="coopleave">방 나가기</button>`;
+  if (kind === 'coopmenu') html = `<h2>🤝 같이 하는 중</h2><p class="small">같이 할 때는 게임이 멈추지 않아요.</p>
+    <button class="bbtn" data-act="resume">계속하기</button><button class="bbtn alt" data-act="coopleave">방 나가기</button>`;
   if (kind === 'rank') html = `<h2>🏆 랭킹</h2>
     <div class="tabs"><button data-act="tab-local" class="${rankTab === 'local' ? 'on' : ''}">📱 이 기기</button><button data-act="tab-online" class="${rankTab === 'online' ? 'on' : ''}">🌐 친구들</button></div>
     <ul class="rank" id="rankList"><li>불러오는 중…</li></ul>
@@ -718,12 +773,27 @@ function showOverlay(kind) {
   card.innerHTML = html; $('#overlay').classList.remove('hide');
   if (kind === 'rank') renderRank();
   if (kind === 'title') refreshCont();
-  backTo = (kind === 'rank' || kind === 'room') ? backTo : kind;
+  if (kind === 'lobby') coopLobbyUpdate();
+  backTo = (kind === 'rank' || kind === 'room' || kind === 'coopentry') ? backTo : kind;
 }
 let backTo = 'title';
 $('#card').addEventListener('click', e => {
   const act = e.target.dataset && e.target.dataset.act; if (!act) return;
   unlockAudio();
+  if (act === 'coop') {
+    const inp = $('#nameIn'), nm = inp.value.trim().slice(0, 8);
+    if (!nm) { inp.classList.remove('bad'); void inp.offsetWidth; inp.classList.add('bad'); inp.focus(); return; }
+    playerName = nm; store.set('hm_name', nm); showOverlay('coopentry');
+  }
+  if (act === 'coopcreate') coopCreate().catch(err => coopMsg('방을 만들지 못했어요. 인터넷을 확인해 주세요.'));
+  if (act === 'coopjoin') {
+    const code = $('#coopCode').value.replace(/\D/g, '');
+    if (code.length !== 4) { $('#coopCode').classList.remove('bad'); void $('#coopCode').offsetWidth; $('#coopCode').classList.add('bad'); return; }
+    coopJoin(code).catch(err => coopMsg(err.message === 'noroom' ? '그 번호의 방이 없어요. 번호를 확인해 주세요.' : err.message === 'full' ? '방이 꽉 찼어요 (4명).' : '들어가지 못했어요. 인터넷을 확인해 주세요.'));
+  }
+  if (act === 'coopstart') coopStartGame();
+  if (act === 'coopretry') coopRetry();
+  if (act === 'coopleave') coopLeave();
   if (act === 'room') {
     const inp = $('#nameIn'), nm = inp.value.trim().slice(0, 8);
     if (!nm) { inp.classList.remove('bad'); void inp.offsetWidth; inp.classList.add('bad'); inp.focus(); return; }
@@ -747,12 +817,13 @@ $('#card').addEventListener('click', e => {
     playerName = nm; store.set('hm_name', nm); $('#nameIn').blur();
     hearts = CFG.hearts; loadCheckpoint(cp); roomCode = cp.room || ''; begin();
   }
-  if (act === 'next') { level++; begin(); }
+  if (act === 'next') { if (coop) { if (coopIsHost()) coopNext(true); else toast('방장이 계속하기를 누르면 같이 시작해요'); return; } level++; begin(); }
   if (act === 'retry') { hearts = CFG.hearts; const cp = getCheckpoint(playerName); if (cp && cp.level === level) loadCheckpoint(cp); else newRun(); begin(); }
   if (act === 'rank') { if ($('#nameIn')) playerName = $('#nameIn').value.trim().slice(0, 8) || playerName; showOverlay('rank'); }
   if (act === 'back') showOverlay(backTo);
   if (act === 'tab-local' || act === 'tab-online') { rankTab = act.slice(4); showOverlay('rank'); }
-  if (act === 'resume') { state = 'play'; $('#overlay').classList.add('hide'); }
+  if (act === 'resume') { if (!coop) state = 'play'; $('#overlay').classList.add('hide'); }
+  if (act === 'home' && coop) { coopLeave(); return; }
   if (act === 'home') {
     const quitting = state === 'pause' && runScore > 0;
     state = 'title';
@@ -785,6 +856,7 @@ function newRun() { runTime = 0; runCandies = 0; runScore = 0; lastBonus = null;
 function begin() { $('#overlay').classList.add('hide'); setupLevel(); inv = 0; state = 'play'; toast(`${roomCode ? '👫 방 ' + roomCode + ' · ' : ''}레벨 ${level} · 사탕 ${candies.length}개를 찾아라!`); }
 const roomMark = () => roomCode ? `👫 방 <b>${roomCode}</b> · ` : '';
 function togglePause() {
+  if (coop) { if (state === 'play') showOverlay('coopmenu'); return; }
   if (state === 'play') { state = 'pause'; showOverlay('pause'); }
   else if (state === 'pause') { state = 'play'; $('#overlay').classList.add('hide'); }
 }
@@ -794,7 +866,7 @@ $('#bSound').addEventListener('click', () => {
   store.set('hm_audio', audioMode); unlockAudio(); updateHud();
   toast({ all: '🎵 음악 + 효과음', sfx: '🔊 효과음만', off: '🔇 소리 끔' }[audioMode]);
 });
-document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') togglePause(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play' && !coop) togglePause(); });
 
 // ===================== 랭킹 =====================
 // 이 기기 랭킹: 이름별 최고 점수 (친구들이 한 휴대폰을 돌려가며 할 때)
@@ -852,11 +924,288 @@ async function renderRank() {
   catch (e) { ul.innerHTML = '<li>친구 랭킹을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</li>'; }
 }
 
+// ===================== 🤝 같이 하기 (실시간 협동, Firebase Realtime Database) =====================
+// 방 데이터: coop/<번호>/{ meta, players/<pid>, ghosts }
+//  - meta: status(lobby|play|clear|over|ending), level, round(판마다 +1), startAt, hearts, score, candies{번호:pid}, exitFound
+//  - players: 이름·위치(x,y)·마지막 신호 시각(t). 8초 넘게 신호가 없으면 나간 것으로 봄
+//  - ghosts: 방장(가장 먼저 들어온 사람)의 폰이 유령을 움직이고 위치를 보냄. 방장이 나가면 다음 사람이 이어받음
+const COOP_COLORS = ['#ff7a14', '#2fa8ff', '#e83fa0', '#3fbf3a'];
+const SV_TS = { '.sv': 'timestamp' };
+let coop = null;
+const coopReady = () => !!ONLINE.rtdbUrl;
+const sNow = () => Date.now() + (coop ? coop.off : 0);
+const coopMeta = () => (coop && coop.room && coop.room.meta) || {};
+function coopUrl(path) { return `${ONLINE.rtdbUrl.replace(/\/$/, '')}/coop/${coop.code}${path ? '/' + path : ''}.json`; }
+async function coopReq(method, path, body) {
+  const r = await withTimeout(fetch(coopUrl(path), { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }), 8000);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function coopSend(method, path, body) { if (coop) coopReq(method, path, body).catch(() => { }); }
+function coopMsg(t) { const el = $('#coopMsg'); if (el) el.textContent = t; else toast(t); }
+function newCoop(code) {
+  let pid = sessionStorageGet('hm_pid');
+  if (!pid) { pid = 'p' + Math.random().toString(36).slice(2, 10); sessionStorageSet('hm_pid', pid); }
+  return { code, pid, room: {}, off: 0, round: 0, status: '', startAt: Date.now(), sentAt: 0, beatAt: 0, ghostAt: 0, distAt: 0, lastPos: '', view: {}, hitAt: null, wasOpen: false, wasFound: false, hostWas: null, overSent: 0 };
+}
+function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { } }
+// 실시간 스트림을 로컬 사본(coop.room)에 반영
+function setChild(o, k, v) {
+  if (k.indexOf('/') >= 0) { applyAt(o, '/' + k, v, false); return; }
+  if (v === null) delete o[k]; else o[k] = v;
+}
+function applyAt(root, path, data, merge) {
+  const parts = path.split('/').filter(Boolean);
+  if (!parts.length) {
+    if (merge) { for (const k in data) setChild(root, k, data[k]); return root; }
+    return (data && typeof data === 'object') ? data : {};
+  }
+  let o = root;
+  for (let i = 0; i < parts.length - 1; i++) { if (!o[parts[i]] || typeof o[parts[i]] !== 'object') o[parts[i]] = {}; o = o[parts[i]]; }
+  const last = parts[parts.length - 1];
+  if (merge) { if (!o[last] || typeof o[last] !== 'object') o[last] = {}; for (const k in data) setChild(o[last], k, data[k]); }
+  else setChild(o, last, data);
+  return root;
+}
+function coopListen() {
+  const es = new EventSource(coopUrl(''));
+  coop.es = es;
+  const on = merge => e => {
+    if (!coop || coop.es !== es) return;
+    try { const m = JSON.parse(e.data); coop.room = applyAt(coop.room || {}, m.path, m.data, merge); } catch (err) { return; }
+    coopOnChange();
+  };
+  es.addEventListener('put', on(false)); es.addEventListener('patch', on(true));
+  es.addEventListener('cancel', () => toast('😢 방 연결이 거절됐어요 (Firebase 규칙 확인)'));
+}
+// 지금 방에 있는 사람들 (들어온 순서)
+function coopPlayers() {
+  const ps = (coop && coop.room.players) || {}, now = sNow();
+  return Object.keys(ps).filter(id => ps[id] && ps[id].name && (id === coop.pid || now - (ps[id].t || 0) < 8000))
+    .sort((a, b) => (ps[a].joined || 0) - (ps[b].joined || 0) || (a < b ? -1 : 1)).map(id => Object.assign({ id }, ps[id]));
+}
+function coopColor(id) { const i = coopPlayers().findIndex(p => p.id === id); return COOP_COLORS[(i < 0 ? 0 : i) % COOP_COLORS.length]; }
+function coopIsHost() { const ps = coopPlayers(); return !!coop && ps.length > 0 && ps[0].id === coop.pid; }
+// 친구들 화면 위치 (받은 위치로 부드럽게 따라감)
+function coopMates() {
+  const out = [];
+  for (const p of coopPlayers()) {
+    if (p.id === coop.pid || typeof p.x !== 'number' || p.r !== coop.round) continue;
+    let v = coop.view[p.id];
+    if (!v || Math.hypot(v.px - p.x, v.py - p.y) > 3) v = coop.view[p.id] = { px: p.x, py: p.y, step: 0, moving: false, face: 1 };
+    out.push({ id: p.id, name: p.name, v, tx: p.x, ty: p.y, f: p.f || 1 });
+  }
+  return out;
+}
+async function coopCreate() {
+  for (let tries = 0; tries < 6; tries++) {
+    const code = String(1000 + Math.floor(Math.random() * 9000));
+    coop = newCoop(code);
+    const m = await coopReq('GET', 'meta');
+    if (m && m.created && Date.now() - m.created < 6 * 3600e3) continue;   // 최근에 쓰는 방 번호는 피함
+    await coopReq('PUT', '', { meta: { status: 'lobby', level: 1, round: 0, hearts: CFG.hearts, score: 0, created: SV_TS } });
+    return coopEnter();
+  }
+  throw new Error('busy');
+}
+async function coopJoin(code) {
+  coop = newCoop(code);
+  const room = await coopReq('GET', '').catch(e => { coop = null; throw e; });
+  if (!room || !room.meta) { coop = null; throw new Error('noroom'); }
+  coop.room = room;
+  if (coopPlayers().filter(p => p.id !== coop.pid).length >= 4) { coop = null; throw new Error('full'); }
+  return coopEnter();
+}
+async function coopEnter() {
+  const t0 = Date.now();
+  const res = await coopReq('PUT', 'players/' + coop.pid, { name: playerName, joined: SV_TS, t: SV_TS, x: 1, y: 1, f: 1, r: 0 });
+  const t1 = Date.now();
+  if (res && typeof res.t === 'number') coop.off = res.t - (t0 + t1) / 2;   // 폰마다 시계가 달라도 같은 시간 기준
+  coopListen();
+  state = 'lobby'; showOverlay('lobby');
+}
+function coopLobbyUpdate() {
+  const ul = $('#coopList'), ctl = $('#lobbyCtl'); if (!ul || !coop) return;
+  ul.innerHTML = '';
+  coopPlayers().forEach((p, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span class="dot" style="background:${COOP_COLORS[i % 4]}"></span><span class="nm"></span>${i === 0 ? ' 👑' : ''}${p.id === coop.pid ? ' (나)' : ''}`;
+    li.querySelector('.nm').textContent = p.name; ul.appendChild(li);
+  });
+  const m = coopMeta(), host = coopIsHost();
+  const html = m.status && m.status !== 'lobby' ? `<p>다른 친구들이 게임 중이에요. 다음 판부터 같이 해요!</p>`
+    : host ? `<button class="bbtn" data-act="coopstart">▶ 모두 모였어! 시작하기</button>` : `<p>👑 방장이 시작하면 바로 시작돼요…</p>`;
+  if (ctl.dataset.h !== html) { ctl.innerHTML = html; ctl.dataset.h = html; }
+}
+function coopStartGame() {
+  const m = coopMeta();
+  coopSend('PATCH', 'meta', { status: 'play', level: 1, round: (m.round || 0) + 1, startAt: SV_TS, hearts: CFG.hearts, score: 0, levelScore: 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
+}
+function coopRetry() {
+  const m = coopMeta();
+  coopSend('PATCH', 'meta', { status: 'play', round: (m.round || 0) + 1, startAt: SV_TS, hearts: CFG.hearts, score: m.levelScore || 0, candies: null, exitFound: null, bonus: null, reason: null, clearBy: null });
+}
+function coopNext(force) {
+  const m = coopMeta();
+  if (!force && m.status !== 'clear') return;
+  coopSend('PATCH', 'meta', { status: 'play', level: (m.level || 1) + 1, round: (m.round || 0) + 1, startAt: SV_TS, levelScore: m.score || 0, candies: null, exitFound: null, bonus: null, clearBy: null });
+}
+function coopClear() {
+  const m = coopMeta(); if (m.status !== 'play' || m.round !== coop.round) return;
+  const b = { candy: got * CFG.scoreCandy, clear: level * CFG.scoreClear, time: Math.ceil(timeLeft) * CFG.scoreSecond, heart: hearts * CFG.scoreHeart };
+  b.total = b.candy + b.clear + b.time + b.heart;
+  coopSend('PATCH', 'meta', { status: level === CFG.finalLevel ? 'ending' : 'clear', score: (m.score || 0) + b.total, bonus: b, clearBy: playerName, clearAt: SV_TS });
+  state = 'wait';
+}
+function coopCaught() {
+  const m = coopMeta();
+  SFX.hit(); if (navigator.vibrate) navigator.vibrate(200);
+  burst(player.px, player.py, '#ffffff', 20);
+  inv = CFG.invincible; resetPlayer();
+  const h = Math.max(0, (m.hearts || 0) - 1);
+  const patch = { hearts: h, hit: { name: playerName, pid: coop.pid, at: SV_TS } };
+  if (h <= 0) { patch.status = 'over'; patch.reason = 'ghost'; }
+  hearts = h; updateHud();
+  coopSend('PATCH', 'meta', patch);
+  toast(h > 0 ? '👻 잡혔다! 처음 자리로! (팀 하트 -1)' : '👻 잡혔다!');
+}
+function coopTimeUp() {
+  if (coopIsHost() && coop.overSent !== coop.round && coopMeta().status === 'play') { coop.overSent = coop.round; coopSend('PATCH', 'meta', { status: 'over', reason: 'time' }); }
+}
+function coopLeave() {
+  if (coop) {
+    try { fetch(coopUrl('players/' + coop.pid), { method: 'DELETE', keepalive: true }).catch(() => { }); } catch (e) { }
+    if (coop.es) coop.es.close();
+  }
+  coop = null; roomCode = ''; state = 'title'; showOverlay('title'); updateHud();
+}
+addEventListener('pagehide', () => { if (coop) try { fetch(coopUrl('players/' + coop.pid), { method: 'DELETE', keepalive: true }); } catch (e) { } });
+// 방 데이터가 바뀔 때마다
+function coopOnChange() {
+  if (!coop) return;
+  const m = coopMeta();
+  if (state === 'lobby') coopLobbyUpdate();
+  if (m.status === 'play' && m.round && m.round !== coop.round) { coopBeginRound(m); }
+  else if (m.round === coop.round && m.status !== coop.status) {
+    coop.status = m.status;
+    if (m.status === 'clear') {
+      state = 'clear'; SFX.win(); runCandies += got; lastBonus = m.bonus || null; runScore = m.score || 0; level = m.level || level;
+      showOverlay('coopclear');
+    } else if (m.status === 'ending') {
+      state = 'clear'; SFX.win(); runCandies += got; lastBonus = m.bonus || null; runScore = m.score || 0;
+      if (level > best) { best = level; store.set('hm_best', best); }
+      recordScore().then(() => showOverlay('ending'));
+    } else if (m.status === 'over') {
+      state = 'over'; SFX.over(); overReason = m.reason || 'ghost'; runScore = m.score || 0;
+      recordScore().then(() => showOverlay('coopover'));
+    }
+  }
+  if (coop.round && m.round === coop.round && (state === 'play' || state === 'wait')) coopSyncShared(m);
+  if (m.hit && m.hit.at !== coop.hitAt) {
+    const first = coop.hitAt === null; coop.hitAt = m.hit.at;
+    if (!first && m.hit.pid !== coop.pid && state === 'play') { toast(`👻 ${m.hit.name} 잡혔어! 팀 하트 -1`); SFX.hit(); }
+  }
+  if (typeof m.hearts === 'number') hearts = m.hearts;
+  if (typeof m.score === 'number') runScore = m.score;
+  // 방장이 아니면 유령 위치를 받아서 따라감
+  const gs = coop.room.ghosts;
+  if (!coopIsHost() && gs && gs.r === coop.round && gs.l) {
+    const list = Array.isArray(gs.l) ? gs.l : Object.keys(gs.l).map(k => gs.l[k]);
+    list.forEach((a, i) => { const g = ghosts[i]; if (!g || !a) return; g.tpx = a[0]; g.tpy = a[1]; g.dir = ['up', 'down', 'left', 'right'][a[2]] || null; g.wait = a[3] ? 1 : 0; g.chase = !!a[4]; });
+  }
+  updateHud();
+}
+function coopBeginRound(m) {
+  coop.round = m.round; coop.status = 'play'; coop.wasOpen = false; coop.wasFound = false; coop.view = {};
+  roomCode = coop.code; level = m.level || 1; hearts = typeof m.hearts === 'number' ? m.hearts : CFG.hearts; runScore = m.score || 0;
+  coop.startAt = typeof m.startAt === 'number' ? m.startAt : sNow();
+  $('#overlay').classList.add('hide');
+  setupLevel(); inv = 0; state = 'play';
+  for (const g of ghosts) { g.tpx = g.px; g.tpy = g.py; }
+  coop.lastPos = ''; coop.sentAt = 0;
+  coopSyncShared(m);
+  toast(`🤝 레벨 ${level} · 다 같이 사탕 ${candies.length}개를 찾자!`);
+}
+// 사탕·출구는 팀이 같이 쓴다
+function coopSyncShared(m) {
+  const tk = m.candies || {};
+  candies.forEach((c, i) => {
+    const on = tk[i] !== undefined && tk[i] !== null;
+    if (on) { if (!c.taken) { c.taken = true; burst(c.x, c.y, `hsl(${c.hue},90%,60%)`, 10); if (tk[i] !== coop.pid) SFX.candy(); } c.pending = false; }
+    else if (c.taken && !c.pending) c.taken = false;
+  });
+  got = candies.filter(c => c.taken).length;
+  exitOpen = got === candies.length;
+  if (exitOpen && !coop.wasOpen) { coop.wasOpen = true; SFX.open(); toast((exitFound || m.exitFound) ? '🚪 출구가 열렸어! 아무나 들어가면 다 같이 탈출!' : '🔓 어딘가 출구가 열렸어! 다 같이 찾아보자!'); }
+  if (m.exitFound && !exitFound) { exitFound = true; SFX.found(); toast('🚪 친구가 출구를 찾았어!'); }
+  updateHud();
+}
+// 유령: 방장 폰이 움직이고, 나머지는 받은 위치를 부드럽게 따라감
+function coopGhosts(dt) {
+  if (coopIsHost()) {
+    if (coop.hostWas !== coop.pid) {   // 방금 방장이 됐으면 지금 보이는 위치에서 이어서 움직임
+      coop.hostWas = coop.pid;
+      for (const g of ghosts) { g.x = g.tx = Math.round(g.px); g.y = g.ty = Math.round(g.py); g.px = g.x; g.py = g.y; g.moving = false; g.pause = 0; if (g.wait > 0 && levelTime > 1) g.wait = Math.min(g.wait, .5); }
+    }
+    if (clock - coop.distAt > .25) {   // 가장 가까운 친구를 쫓도록, 모든 친구 위치에서 거리 계산
+      coop.distAt = clock;
+      const pts = [[player.x, player.y]].concat(coopMates().map(m => [Math.round(m.tx), Math.round(m.ty)]));
+      distMap = multiBfs(pts);
+    }
+    for (const g of ghosts) stepGhost(g, dt);
+    if (Date.now() - coop.ghostAt > 120) {
+      coop.ghostAt = Date.now();
+      coopSend('PUT', 'ghosts', { r: coop.round, l: ghosts.map(g => [+g.px.toFixed(2), +g.py.toFixed(2), ['up', 'down', 'left', 'right'].indexOf(g.dir), g.wait > 0 ? 1 : 0, g.chase ? 1 : 0]) });
+    }
+  } else {
+    coop.hostWas = null;
+    for (const g of ghosts) {
+      if (typeof g.tpx !== 'number') continue;
+      if (Math.hypot(g.tpx - g.px, g.tpy - g.py) > 2) { g.px = g.tpx; g.py = g.tpy; }
+      const k = Math.min(1, dt * 12); g.px += (g.tpx - g.px) * k; g.py += (g.tpy - g.py) * k;
+    }
+  }
+}
+function multiBfs(pts) {
+  const d = Array.from({ length: H }, () => Array(W).fill(Infinity)), q = [];
+  for (const [x, y] of pts) if (isFloor(x, y) && d[y][x] !== 0) { d[y][x] = 0; q.push([x, y]); }
+  for (let i = 0; i < q.length; i++) {
+    const [x, y] = q[i];
+    for (const k in DIRS) { const nx = x + DIRS[k][0], ny = y + DIRS[k][1]; if (isFloor(nx, ny) && d[ny][nx] === Infinity) { d[ny][nx] = d[y][x] + 1; q.push([nx, ny]); } }
+  }
+  return d;
+}
+// 매 프레임: 내 위치 보내기, 신호 유지, 친구 위치 부드럽게, 방장 일 처리
+function coopTick(dt) {
+  if (!coop) return;
+  const now = Date.now(), m = coopMeta();
+  if ((state === 'play' || state === 'wait') && player && now - coop.sentAt > 100) {
+    const k = `${player.px.toFixed(2)},${player.py.toFixed(2)},${player.face}`;
+    if (k !== coop.lastPos || now - coop.beatAt > 2000) {
+      coop.sentAt = now; coop.beatAt = now; coop.lastPos = k;
+      coopSend('PATCH', 'players/' + coop.pid, { x: +player.px.toFixed(2), y: +player.py.toFixed(2), f: player.face, r: coop.round, t: SV_TS });
+    }
+  } else if (now - coop.beatAt > 2000) { coop.beatAt = now; coopSend('PATCH', 'players/' + coop.pid, { t: SV_TS }); }
+  for (const mt of (state === 'play' || state === 'wait') ? coopMates() : []) {
+    const v = mt.v, k = Math.min(1, dt * 12), ox = v.px, oy = v.py;
+    v.px += (mt.tx - v.px) * k; v.py += (mt.ty - v.py) * k; v.face = mt.f;
+    const mv = Math.hypot(v.px - ox, v.py - oy); v.moving = mv > .002; v.step += mv;
+  }
+  if (state === 'lobby' && now - (coop.lobbyAt || 0) > 1000) { coop.lobbyAt = now; coopLobbyUpdate(); }
+  // 방장: 탈출 4초 뒤 다음 레벨 시작 (방장이 나가도 다음 방장이 이어서)
+  if (coopIsHost() && m.status === 'clear' && m.round === coop.round && typeof m.clearAt === 'number' && sNow() - m.clearAt > 4000 && coop.nextSent !== m.round) {
+    coop.nextSent = m.round; coopNext(false);
+  }
+  if (state === 'clear' && m.status === 'clear') { const el = $('#nextMsg'); if (el && typeof m.clearAt === 'number') el.textContent = `다음 레벨까지 ${Math.max(0, Math.ceil(4 - (sNow() - m.clearAt) / 1000))}초…`; }
+}
+
 // ===================== 메인 루프 =====================
 let last = performance.now();
 function loop(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now; clock += dt;
   if (state === 'play') update(dt);
+  if (coop) coopTick(dt);
   musicSync();
   render();
   requestAnimationFrame(loop);
@@ -865,7 +1214,7 @@ function loop(now) {
 setupLevel(); updateHud(); showOverlay('title');
 requestAnimationFrame(loop);
 // 테스트용 훅
-window.__game = { get state() { return state; }, get player() { return player; }, get ghosts() { return ghosts; }, get candies() { return candies; }, get exit() { return exitT; }, get maze() { return maze; }, get exitOpen() { return exitOpen; }, get exitFound() { return exitFound; }, get got() { return got; }, set level(v) { level = v; }, get timeLeft() { return timeLeft; }, set timeLeft(v) { timeLeft = v; }, get timeLimit() { return timeLimit; }, get W() { return W; }, get room() { return roomCode; }, get runScore() { return runScore; }, get music() { return !!mTimer; }, regen: () => setupLevel(), get hearts() { return hearts; } };
+window.__game = { get state() { return state; }, get player() { return player; }, get ghosts() { return ghosts; }, get candies() { return candies; }, get exit() { return exitT; }, get maze() { return maze; }, get exitOpen() { return exitOpen; }, get exitFound() { return exitFound; }, get got() { return got; }, set level(v) { level = v; }, get timeLeft() { return timeLeft; }, set timeLeft(v) { timeLeft = v; }, get timeLimit() { return timeLimit; }, get W() { return W; }, get room() { return roomCode; }, get coop() { return coop; }, get lvl() { return level; }, get runScore() { return runScore; }, get music() { return !!mTimer; }, regen: () => setupLevel(), get hearts() { return hearts; } };
 </script>
 </body>
 </html>
