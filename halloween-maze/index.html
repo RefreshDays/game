@@ -44,16 +44,16 @@
   #toast.show{opacity:1}
   #controls{grid-area:ctrl;display:flex;align-items:center;justify-content:center;padding:2px 0 8px}
   /* 레고 스타일 십자 방향 패드 */
-  #dpad{width:138px;height:138px;position:relative;touch-action:none}
-  .arrow{position:absolute;width:48px;height:48px;border-radius:10px;background:var(--orange);
+  #dpad{width:159px;height:159px;position:relative;touch-action:none}
+  .arrow{position:absolute;width:55px;height:55px;border-radius:11px;background:var(--orange);
     box-shadow:inset 0 -6px 0 var(--orange-d),inset 0 3px 0 rgba(255,255,255,.35),0 4px 0 #000;
-    display:flex;align-items:center;justify-content:center;color:#3a1600;font-size:20px;font-weight:900;pointer-events:none;transition:transform .05s}
-  .arrow::before{content:"";position:absolute;width:20px;height:20px;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;color:#3a1600;font-size:23px;font-weight:900;pointer-events:none;transition:transform .05s}
+  .arrow::before{content:"";position:absolute;width:23px;height:23px;border-radius:50%;
     background:radial-gradient(circle at 35% 35%,#ffc27a,var(--orange) 60%);box-shadow:0 3px 0 var(--orange-d);opacity:.55}
   .arrow span{position:relative}
   .arrow.on{transform:translateY(4px);box-shadow:inset 0 -2px 0 var(--orange-d),0 0 0 #000;background:#ffa64d}
-  #a-up{left:45px;top:0}#a-down{left:45px;bottom:0}#a-left{left:0;top:45px}#a-right{right:0;top:45px}
-  #dcenter{position:absolute;left:45px;top:45px;width:48px;height:48px;border-radius:10px;background:#5a2d91;
+  #a-up{left:52px;top:0}#a-down{left:52px;bottom:0}#a-left{left:0;top:52px}#a-right{right:0;top:52px}
+  #dcenter{position:absolute;left:52px;top:52px;width:55px;height:55px;border-radius:11px;background:#5a2d91;
     box-shadow:inset 0 -6px 0 #3b1a63;pointer-events:none}
   #overlay{position:fixed;inset:0;display:flex;align-items:safe center;justify-content:center;overflow-y:auto;touch-action:pan-y;background:rgba(10,4,18,.78);z-index:10;padding:20px}
   #overlay.hide{display:none}
