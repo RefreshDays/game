@@ -42,6 +42,12 @@
   #toast{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(20,8,32,.9);border:2px solid var(--orange);
     padding:8px 14px;border-radius:12px;font-weight:800;font-size:16px;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap}
   #toast.show{opacity:1}
+  /* 엄지 조이스틱: 미로 화면 어디든 누르면 그 자리에 나타남 */
+  #stick{position:absolute;width:96px;height:96px;margin:-48px 0 0 -48px;border-radius:50%;pointer-events:none;
+    background:radial-gradient(circle,rgba(255,138,31,.10) 0 55%,rgba(255,138,31,.22) 56% 100%);border:2px solid rgba(255,194,122,.45)}
+  #stick i{position:absolute;left:50%;top:50%;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;
+    background:radial-gradient(circle at 35% 35%,#ffc27a,var(--orange) 65%);box-shadow:0 3px 0 var(--orange-d);opacity:.85}
+  #stage{touch-action:none}
   #controls{grid-area:ctrl;display:flex;align-items:center;justify-content:center;padding:2px 0 8px}
   /* 레고 스타일 십자 방향 패드 */
   #dpad{width:159px;height:159px;position:relative;touch-action:none}
@@ -101,7 +107,7 @@
     <button class="ibtn" id="bSound" aria-label="소리: 음악+효과음 / 효과음만 / 끄기">🎵</button>
     <button class="ibtn" id="bPause" aria-label="일시정지">⏸</button>
   </div>
-  <div id="stage"><canvas id="cv"></canvas><div id="toast"></div></div>
+  <div id="stage"><canvas id="cv"></canvas><div id="toast"></div><div id="stick" hidden><i></i></div></div>
   <div id="controls">
     <div id="dpad" aria-label="방향 패드">
       <div class="arrow" id="a-up"><span>▲</span></div>
@@ -318,8 +324,8 @@ addEventListener('keydown', e => {
   autoDir = null;
 });
 addEventListener('keyup', e => { const d = KEYMAP[e.key]; if (d) keyStack = keyStack.filter(k => k !== d); });
-addEventListener('blur', () => { keyStack = []; setPad(null); });
-const heldDir = () => padDir || keyStack[keyStack.length - 1] || null;
+addEventListener('blur', () => { keyStack = []; setPad(null); stickDir = null; st0 = null; if (stickEl) stickEl.hidden = true; });
+const heldDir = () => padDir || stickDir || keyStack[keyStack.length - 1] || null;
 
 // 십자패드: 손가락을 떼지 않고 미끄러지듯 방향을 바꿀 수 있게 중심 기준 각도로 판정
 const dpad = $('#dpad');
@@ -340,15 +346,38 @@ dpad.addEventListener('pointermove', e => { if (e.pointerId === padPointer) setP
 const padEnd = e => { if (e.pointerId === padPointer) { padPointer = null; setPad(null); } };
 dpad.addEventListener('pointerup', padEnd); dpad.addEventListener('pointercancel', padEnd); dpad.addEventListener('lostpointercapture', padEnd);
 
-// 화면 스와이프: 벽에 닿을 때까지 그 방향으로 계속 이동
-let sw0 = null;
-$('#stage').addEventListener('pointerdown', e => { sw0 = { x: e.clientX, y: e.clientY }; unlockAudio(); });
-$('#stage').addEventListener('pointerup', e => {
-  if (!sw0) return;
-  const dx = e.clientX - sw0.x, dy = e.clientY - sw0.y; sw0 = null;
-  if (Math.hypot(dx, dy) < 24) return;
-  autoDir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+// 엄지 조이스틱: 미로 화면을 누른 채 밀면 그 방향으로 계속 이동, 떼면 멈춤.
+// 짧게 휙 튕기면(스와이프) 벽에 닿을 때까지 쭉 이동.
+let stickDir = null, st0 = null;
+const stickEl = $('#stick'), stageEl = $('#stage');
+function stickShow(x, y, kx, ky) {
+  const r = stageEl.getBoundingClientRect();
+  stickEl.hidden = false; stickEl.style.left = (x - r.left) + 'px'; stickEl.style.top = (y - r.top) + 'px';
+  stickEl.firstChild.style.transform = `translate(${kx}px,${ky}px)`;
+}
+stageEl.addEventListener('pointerdown', e => {
+  if (st0) return; unlockAudio();
+  st0 = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 };
+  try { stageEl.setPointerCapture(e.pointerId); } catch (err) { }
+  stickShow(e.clientX, e.clientY, 0, 0);
 });
+stageEl.addEventListener('pointermove', e => {
+  if (!st0 || e.pointerId !== st0.id) return;
+  let dx = e.clientX - st0.x, dy = e.clientY - st0.y, d = Math.hypot(dx, dy);
+  st0.moved = Math.max(st0.moved, d);
+  if (d > 40) { st0.x = e.clientX - dx / d * 40; st0.y = e.clientY - dy / d * 40; dx = e.clientX - st0.x; dy = e.clientY - st0.y; d = 40; }  // 손가락을 따라 원이 끌려와서 방향 바꾸기가 쉬움
+  const nd = d < 12 ? null : Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+  if (nd && nd !== stickDir) autoDir = null;
+  stickDir = nd;
+  stickShow(st0.x, st0.y, dx * .7, dy * .7);
+});
+const stickEnd = e => {
+  if (!st0 || e.pointerId !== st0.id) return;
+  const flick = performance.now() - st0.t < 250 && st0.moved >= 24;
+  if (flick && stickDir) autoDir = stickDir;   // 휙 튕기기 = 벽까지 쭉
+  st0 = null; stickDir = null; stickEl.hidden = true;
+};
+stageEl.addEventListener('pointerup', stickEnd); stageEl.addEventListener('pointercancel', stickEnd); stageEl.addEventListener('lostpointercapture', stickEnd);
 document.addEventListener('contextmenu', e => e.preventDefault());
 
 // ===================== 소리 =====================
@@ -744,7 +773,7 @@ function showOverlay(kind) {
     <p>깜깜한 미로 속, 내 주변만 불빛이 비춰요.<br>반짝이는 <b>🍬 사탕</b>을 모두 모으고<br>깜깜한 곳 어딘가 숨은 <b>🚪 출구</b>를 찾아 탈출하세요!</p>
     <p>👻 <b>유령</b>이 미로를 떠돌다 쫓아와요. 빨간 눈을 조심!<br>잡히면 하트 1개를 잃고 사탕도 처음부터!</p>
     <p>🏆 ${CFG.finalLevel}판을 모두 탈출하면 엔딩!</p>
-    <p class="small">조작: 아래 방향 버튼 · 화면 밀기(스와이프) · 키보드 방향키</p>
+    <p class="small">조작: 방향 버튼 · 미로 화면을 엄지로 누르고 밀기 · 키보드 방향키</p>
     <p>⏱ 판마다 <b>제한시간</b>이 있어요!</p>
     ${best ? `<p class="small">이 기기 최고 기록: 레벨 ${best} 탈출${best >= CFG.finalLevel ? ' 🏆' : ''}</p>` : ''}
     <input id="nameIn" maxlength="8" placeholder="내 이름 (랭킹에 나와요)" value="${esc(playerName)}" autocomplete="off" enterkeyhint="go">
