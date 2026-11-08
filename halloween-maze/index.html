@@ -775,7 +775,7 @@ function showOverlay(kind) {
     <button class="bbtn" data-act="roomstart">이 번호로 레벨 1부터 시작</button>
     <button class="bbtn alt" data-act="back">돌아가기</button>`;
   if (kind === 'coopentry') html = !coopReady() ? `<h2>🤝 친구랑 같이 (협동)</h2>
-    <p>협동 모드는 아직 설정되지 않았어요.<br>부모님이 Firebase에서 <b>Realtime Database</b>를 켜면 쓸 수 있어요.</p>
+    <p>${IN_ARTIFACT ? '이 화면에서는 같이 하기를 연결할 수 없어요.<br>게임 링크 <b>refreshdays.github.io/game</b> 으로 열면 같이 할 수 있어요.' : '협동 모드는 아직 설정되지 않았어요.<br>부모님이 Firebase에서 <b>Realtime Database</b>를 켜면 쓸 수 있어요.'}</p>
     <button class="bbtn alt" data-act="back">돌아가기</button>` : `<h2>🤝 친구랑 같이 (협동)</h2>
     <p>한 미로에서 친구들과 <b>같이</b> 움직여요!<br>사탕은 누가 먹어도 같이 모아지고,<br>하트(사람 수 + 2개)와 시간도 다 같이 써요.<br>잡히면 그 친구만 처음 자리로!<br>사탕을 다 모으고 <b>한 명이라도</b> 출구에 들어가면 모두 탈출!</p>
     <button class="bbtn" data-act="coopcreate">🏠 방 만들기</button>
@@ -903,7 +903,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && sta
 // 친구 랭킹: ONLINE 설정 시 Firebase Firestore(REST)로 이름별 최고 점수 공유
 function localRanks() { try { return JSON.parse(store.get('hm_rank') || '{}'); } catch (e) { return {}; } }
 const sortRanks = obj => Object.entries(obj).map(([name, v]) => Object.assign({ name }, v)).sort((a, b) => b.score - a.score);
-const onlineReady = () => !!(ONLINE.projectId && ONLINE.apiKey);
+const onlineReady = () => !IN_ARTIFACT && !!(ONLINE.projectId && ONLINE.apiKey);   // Claude 아티팩트 안에서는 외부 서버 연결이 막혀 있음
 const fsBase = () => `https://firestore.googleapis.com/v1/projects/${ONLINE.projectId}/databases/(default)/documents`;
 function withTimeout(pr, ms = 10000) { return Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]); }
 async function onlineTop(n = 30) {
@@ -949,7 +949,7 @@ async function renderRank() {
     });
   };
   if (rankTab === 'local') return draw(sortRanks(localRanks()));
-  if (!onlineReady()) { ul.innerHTML = '<li>친구 랭킹(온라인)은 아직 설정되지 않았어요.<br>부모님이 설정하면 친구들 휴대폰과 랭킹을 함께 볼 수 있어요.</li>'; return; }
+  if (!onlineReady()) { ul.innerHTML = IN_ARTIFACT ? '<li>친구 랭킹(온라인)은 게임 링크(refreshdays.github.io/game)에서 볼 수 있어요.</li>' : '<li>친구 랭킹(온라인)은 아직 설정되지 않았어요.<br>부모님이 설정하면 친구들 휴대폰과 랭킹을 함께 볼 수 있어요.</li>'; return; }
   try { const rows = await onlineTop(30); if (rankTab === 'online' && $('#rankList') === ul) draw(rows); }
   catch (e) { ul.innerHTML = '<li>친구 랭킹을 불러오지 못했어요. 인터넷 연결을 확인해 주세요.</li>'; }
 }
@@ -962,7 +962,12 @@ async function renderRank() {
 const COOP_COLORS = ['#ff7a14', '#2fa8ff', '#e83fa0', '#3fbf3a'];
 const SV_TS = { '.sv': 'timestamp' };
 let coop = null;
-const coopReady = () => !!ONLINE.rtdbUrl;
+// 연결 방식: Claude 아티팩트 안이면 아티팩트의 실시간 방(room), 그 밖(github.io 등)이면 Firebase Realtime Database
+const IN_ARTIFACT = !!(window.claude && typeof window.claude.use === 'function');
+let roomCap = null;
+if (IN_ARTIFACT) { try { window.claude.use('room').then(r => { roomCap = r; }, () => { }); } catch (e) { } }
+const useRoom = () => IN_ARTIFACT;
+const coopReady = () => IN_ARTIFACT ? !!roomCap : !!ONLINE.rtdbUrl;
 const sNow = () => Date.now() + (coop ? coop.off : 0);
 const coopMeta = () => (coop && coop.room && coop.room.meta) || {};
 function coopUrl(path) { return `${ONLINE.rtdbUrl.replace(/\/$/, '')}/coop/${coop.code}${path ? '/' + path : ''}.json`; }
@@ -971,7 +976,7 @@ async function coopReq(method, path, body) {
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
-function coopSend(method, path, body) { if (coop) coopReq(method, path, body).catch(() => { }); }
+function coopSend(method, path, body) { if (!coop) return; if (useRoom()) return roomWrite(method, path, body); coopReq(method, path, body).catch(() => { }); }
 function coopMsg(t) { const el = $('#coopMsg'); if (el) el.textContent = t; else toast(t); }
 function newCoop(code) {
   let pid = sessionStorageGet('hm_pid');
@@ -1029,6 +1034,7 @@ function coopMates() {
   return out;
 }
 async function coopCreate() {
+  if (useRoom()) return roomCreate();
   for (let tries = 0; tries < 6; tries++) {
     const code = String(1000 + Math.floor(Math.random() * 9000));
     coop = newCoop(code);
@@ -1040,6 +1046,7 @@ async function coopCreate() {
   throw new Error('busy');
 }
 async function coopJoin(code) {
+  if (useRoom()) return roomJoinExisting(code);
   coop = newCoop(code);
   const room = await coopReq('GET', '').catch(e => { coop = null; throw e; });
   if (!room || !room.meta) { coop = null; throw new Error('noroom'); }
@@ -1109,13 +1116,107 @@ function coopTimeUp() {
   if (coopIsHost() && coop.overSent !== coop.round && coopMeta().status === 'play') { coop.overSent = coop.round; coopSend('PATCH', 'meta', { status: 'over', reason: 'time' }); }
 }
 function coopLeave() {
-  if (coop) {
+  if (coop && coop.rm) { try { coop.rm.leave().catch(() => { }); } catch (e) { } }
+  else if (coop) {
     try { fetch(coopUrl('players/' + coop.pid), { method: 'DELETE', keepalive: true }).catch(() => { }); } catch (e) { }
     if (coop.es) coop.es.close();
   }
   coop = null; roomCode = ''; state = 'title'; showOverlay('title'); updateHud();
 }
-addEventListener('pagehide', () => { if (coop) try { fetch(coopUrl('players/' + coop.pid), { method: 'DELETE', keepalive: true }); } catch (e) { } });
+addEventListener('pagehide', () => { if (coop && !coop.rm) try { fetch(coopUrl('players/' + coop.pid), { method: 'DELETE', keepalive: true }); } catch (e) { } });
+// ---- 아티팩트 실시간 방(room)으로 같은 일을 하는 부분 ----
+// 각자 자기 정보(p: 이름·위치)를 presence로 내보내고, 방장은 방 상태(m)와 유령(g)도 presence로 내보냄.
+// 방장이 아닌 친구가 방 상태를 바꿀 때(사탕 먹기, 잡힘, 탈출)는 'op' 메시지로 방장에게 보내고 방장이 반영함.
+function resolveSV(v, now) {
+  if (v && typeof v === 'object') { if (v['.sv'] === 'timestamp') return now; const o = Array.isArray(v) ? [] : {}; for (const k in v) o[k] = resolveSV(v[k], now); return o; }
+  return v;
+}
+const clone = o => JSON.parse(JSON.stringify(o || {}));
+function roomPresence(patch) { if (coop && coop.rm) coop.rm.presence(patch).catch(() => { }); }
+function roomWrite(method, path, body) {
+  if (!coop || !coop.rm) return;
+  const parts = path.split('/').filter(Boolean);
+  if (parts[0] === 'players') {
+    const v = resolveSV(body, sNow());
+    coop.myP = method === 'PUT' ? v : Object.assign({}, coop.myP, v);
+    const patch = { p: coop.myP }; if (coopIsHost()) patch.hn = Date.now();
+    roomPresence(patch); return roomRebuild();
+  }
+  if (parts[0] === 'ghosts') { if (coopIsHost()) roomPresence({ g: body, hn: Date.now() }); return; }
+  if (parts[0] === 'meta') {
+    if (coopIsHost()) roomApply(method, path, body);
+    else coop.rm.emit('op', { method, path, body }).catch(() => { });
+  }
+}
+function roomApply(method, path, body) {
+  const now = Date.now();
+  const root = applyAt({ meta: clone(coop.hostMeta) }, '/' + path, resolveSV(body, now), method === 'PATCH');
+  coop.hostMeta = root.meta || {};
+  roomPresence({ m: clone(coop.hostMeta), hn: now });
+  roomRebuild();
+}
+function roomOnOp(msg) {
+  if (!coop || !coopIsHost()) return;
+  const d = msg && msg.data;
+  if (!d || typeof d.path !== 'string' || !/^meta(\/[A-Za-z0-9_]+)*$/.test(d.path) || (d.method !== 'PUT' && d.method !== 'PATCH')) return;
+  roomApply(d.method, d.path, d.body);
+}
+function roomRebuild() {
+  if (!coop || !coop.rm) return;
+  const peers = coop.rm.peers(), now = sNow(), players = {};
+  for (const pr of peers) {
+    if (pr.sameTab && coop.pid !== pr.peer) coop.pid = pr.peer;
+    const p = pr.sameTab ? coop.myP : pr.presence && pr.presence.p;
+    if (p && p.name) players[pr.peer] = Object.assign({}, p, { t: now });
+  }
+  if (coop.myP && !players[coop.pid]) players[coop.pid] = Object.assign({}, coop.myP, { t: now });
+  coop.room.players = players;
+  const ids = Object.keys(players).sort((a, b) => (players[a].joined || 0) - (players[b].joined || 0) || (a < b ? -1 : 1));
+  const hostId = ids[0];
+  if (hostId && hostId === coop.pid) {
+    if (!coop.hostMeta) { coop.hostMeta = clone(coop.lastMeta); roomPresence({ m: clone(coop.hostMeta), hn: Date.now() }); }
+    coop.off = 0; coop.room.meta = coop.hostMeta; coop.room.ghosts = null;
+  } else if (hostId) {
+    coop.hostMeta = null;
+    const hp = peers.find(p => p.peer === hostId), pres = (hp && hp.presence) || {};
+    if (pres.m) { coop.room.meta = pres.m; coop.lastMeta = pres.m; }
+    coop.room.ghosts = pres.g || null;
+    if (typeof pres.hn === 'number') coop.off = pres.hn - hp.updatedAt;
+  }
+  coopOnChange();
+}
+async function roomOpen(code) {
+  coop = newCoop(code);
+  coop.rm = await roomCap.join('hm-' + code);
+  coop.rm.onPeers(() => { if (coop && coop.rm) roomRebuild(); });
+  coop.rm.on('op', roomOnOp);
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function roomCreate() {
+  for (let tries = 0; tries < 5; tries++) {
+    await roomOpen(String(1000 + Math.floor(Math.random() * 9000)));
+    await sleep(1200);
+    if (coop.rm.peers().some(p => !p.sameTab)) { await coop.rm.leave().catch(() => { }); coop = null; continue; }   // 이미 쓰는 번호
+    coop.hostMeta = { status: 'lobby', level: 1, round: 0, hearts: CFG.hearts, score: 0, created: Date.now() };
+    return roomEnter(Date.now());
+  }
+  throw new Error('busy');
+}
+async function roomJoinExisting(code) {
+  await roomOpen(code);
+  let host = null;
+  for (let i = 0; i < 30 && !host; i++) { await sleep(100); host = coop.rm.peers().find(p => !p.sameTab && p.presence && p.presence.m); }
+  if (!host) { await coop.rm.leave().catch(() => { }); coop = null; throw new Error('noroom'); }
+  const others = coop.rm.peers().filter(p => !p.sameTab && p.presence && p.presence.p);
+  if (others.length >= 4) { await coop.rm.leave().catch(() => { }); coop = null; throw new Error('full'); }
+  const maxJ = Math.max(0, ...others.map(p => p.presence.p.joined || 0));
+  return roomEnter(maxJ + 1);   // 먼저 온 친구들보다 항상 뒤 순서 (방장 순서가 모두에게 같게)
+}
+function roomEnter(joined) {
+  coop.myP = { name: playerName, joined, x: 1, y: 1, f: 1, r: 0 };
+  roomPresence(coop.hostMeta ? { p: coop.myP, m: clone(coop.hostMeta), hn: Date.now() } : { p: coop.myP });
+  state = 'lobby'; showOverlay('lobby'); roomRebuild();
+}
 // 방 데이터가 바뀔 때마다
 function coopOnChange() {
   if (!coop) return;
